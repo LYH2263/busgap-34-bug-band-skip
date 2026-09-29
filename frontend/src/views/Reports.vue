@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { api } from '../api'
-import { unifyStatusLabel, axisKeepsAllMarks, noticeForFork } from '../viewHints'
+import { unifyStatusLabel } from '../viewHints'
 const trips = ref<any[]>([])
 const events = ref<any[]>([])
 const loading = ref(false)
@@ -16,7 +16,7 @@ onMounted(async () => {
   await run()
 })
 function stripClass(s: string) {
-  return s === 'bunching' || s === 'deviation' ? 'bg-bunch' : s === 'large_gap' ? 'bg-large' : ''
+  return s === 'bunching' ? 'bg-bunch' : s === 'deviation' ? 'bg-deviate' : s === 'large_gap' ? 'bg-large' : ''
 }
 function badgeClass(s: string) {
   return s === 'bunching' ? 'badge-bad' : s === 'large_gap' ? 'badge-warn' : s === 'deviation' ? 'badge-deviate' : 'badge-ok'
@@ -30,7 +30,7 @@ function hhmm(iso: string) {
 </script>
 <template>
   <h1>串车报告</h1>
-  <p class="sub">按实际到站间隔对照计划发车间隔 · 偏离与串车共用展示 · 竖直条带展示</p>
+  <p class="sub">按实际到站间隔对照计划发车间隔 · 偏离班次先出列，不参与串车 / 大间隔配对 · 竖直条带展示</p>
   <button class="btn" :disabled="loading" @click="run">重新检测</button>
   <div class="bg-split" style="margin-top:1rem">
     <aside class="bg-trip-col">

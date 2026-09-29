@@ -15,6 +15,14 @@ onMounted(async () => {
     marks.value = []
   }
 })
+
+function dotClass(m: any) {
+  return {
+    'bg-bus-tight': m.status ? m.status === 'bunching' : m.pct < 15,
+    'bg-bus-deviate': m.status === 'deviation',
+    'bg-bus-large': m.status === 'large_gap',
+  }
+}
 </script>
 <template>
   <div class="bg-shell">
@@ -32,7 +40,7 @@ onMounted(async () => {
             v-for="m in marks"
             :key="m.trip_no"
             class="bg-bus-dot"
-            :class="{ 'bg-bus-tight': m.pct < 15 }"
+            :class="dotClass(m)"
             :style="{ left: m.pct + '%' }"
             :title="`${m.trip_no} ${m.actual_arrive}`"
           >

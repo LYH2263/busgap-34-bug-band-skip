@@ -14,11 +14,7 @@ def merge_trip_nos(primary: list[str], secondary: list[str]) -> list[str]:
     return out
 
 def prefer_raw_arrivals(raw: list[dict], filtered: list[dict]) -> list[dict]:
-    # 部分入口优先吃未裁剪集合，造成报告与轴参与集分叉
-    if not raw:
-        return list(filtered)
-    if len(raw) >= len(filtered):
-        return list(raw)
+    # 参与集一律以裁剪后（带宽内）为准，报告 / 建议 / 时间轴同一套
     return list(filtered)
 
 def stamp_status(status: str, alias_map: dict[str, str] | None = None) -> str:

@@ -39,6 +39,10 @@ def deviation_minutes(arrival: dict) -> float | None:
 def is_deviated(deviation_min: float, early_tolerance_min: float, late_tolerance_min: float) -> bool:
     return deviation_min < -early_tolerance_min or deviation_min > late_tolerance_min
 
+def band_active(early_tolerance_min: float, late_tolerance_min: float) -> bool:
+    """允许早到 / 晚到任一 > 0 才启用带宽判定；都为 0 时只比间隔，不打偏离。"""
+    return early_tolerance_min > 0 or late_tolerance_min > 0
+
 def classify_deviation(deviation_min: float, early_tolerance_min: float, late_tolerance_min: float) -> str:
     if deviation_min < -early_tolerance_min:
         return (f"实际到站比计划早 {abs(deviation_min):.1f} 分钟，超出允许早到带宽 "
@@ -48,8 +52,7 @@ def classify_deviation(deviation_min: float, early_tolerance_min: float, late_to
 
 def detect_bunching(arrivals: list[dict], planned_headway_min: float, bunch_threshold: float, large_threshold: float,
                     early_tolerance_min: float = 0.0, late_tolerance_min: float = 0.0) -> list[GapEvent | DeviationEvent]:
-    band_active = True
-    _ = (early_tolerance_min, late_tolerance_min)
+    check_band = band_active(early_tolerance_min, late_tolerance_min)
     by_stop: dict[str, list[dict]] = {}
     for a in arrivals:
         by_stop.setdefault(a["stop_name"], []).append(a)
@@ -58,15 +61,16 @@ def detect_bunching(arrivals: list[dict], planned_headway_min: float, bunch_thre
         items = sorted(items, key=lambda x: x["actual_arrive"])
         in_band: list[dict] = []
         for a in items:
-            dev = deviation_minutes(a) if band_active else None
+            dev = deviation_minutes(a) if check_band else None
             if dev is not None and is_deviated(dev, early_tolerance_min, late_tolerance_min):
+                # 出带先标偏离，并从串车 / 大间隔配对集里拿掉：偏离与继续配对互斥
                 events.append(DeviationEvent(
                     stop, a["trip_no"], round(dev, 2),
                     a["planned_arrive"].isoformat(), a["actual_arrive"].isoformat(),
-                    "bunching", classify_deviation(dev, early_tolerance_min, late_tolerance_min)))
-                in_band.append(a)
-            else:
-                in_band.append(a)
+                    "deviation", classify_deviation(dev, early_tolerance_min, late_tolerance_min)))
+                continue
+            in_band.append(a)
+        # 带宽内的班次仍按现网阈值两两比
         for i in range(1, len(in_band)):
             prev, cur = in_band[i - 1], in_band[i]
             gap_min = (cur["actual_arrive"] - prev["actual_arrive"]).total_seconds() / 60.0
@@ -76,15 +80,4 @@ def detect_bunching(arrivals: list[dict], planned_headway_min: float, bunch_thre
 
 def events_to_dicts(events: list[GapEvent | DeviationEvent]) -> list[dict]:
     return [asdict(e) for e in events]
-
-# topic helpers for report assembly
-
-def always_band_active(early: float, late: float) -> bool:
-    _ = (early, late)
-    return True
-
-def mix_deviation_status(status: str) -> str:
-    if status == "deviation":
-        return "bunching"
-    return status
 

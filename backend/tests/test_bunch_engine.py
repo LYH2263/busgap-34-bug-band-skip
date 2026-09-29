@@ -96,3 +96,52 @@ def test_deviation_event_serializes():
     assert data[0]["trip_no"] == "T1"
     assert data[0]["deviation_min"] == 20.0
     assert data[0]["planned_arrive"] == base.isoformat()
+
+def test_middle_deviation_removed_neighbors_pair_across():
+    base = datetime(2026, 1, 1, 8, 0)
+    arrivals = [
+        _planned("T1", base, base),
+        _planned("T2", base + timedelta(minutes=8), base + timedelta(minutes=20)),
+        _planned("T3", base + timedelta(minutes=16), base + timedelta(minutes=16)),
+    ]
+    events = detect_bunching(arrivals, 8.0, 3.0, 15.0, early_tolerance_min=2.0, late_tolerance_min=5.0)
+    dev = [e for e in events if e.status == "deviation"]
+    gaps = [e for e in events if e.status != "deviation"]
+    assert [e.trip_no for e in dev] == ["T2"]
+    # T2 出带后从配对集拿掉，T1 与 T3 跨班两两比
+    assert len(gaps) == 1
+    assert (gaps[0].earlier_trip, gaps[0].later_trip) == ("T1", "T3")
+    assert gaps[0].gap_min == 16.0
+
+def test_deviated_trip_never_a_pair_endpoint():
+    base = datetime(2026, 1, 1, 8, 0)
+    arrivals = [
+        _planned("T1", base, base),
+        _planned("T2", base + timedelta(minutes=8), base + timedelta(minutes=30)),
+        _planned("T3", base + timedelta(minutes=16), base + timedelta(minutes=20)),
+    ]
+    events = detect_bunching(arrivals, 8.0, 3.0, 15.0, early_tolerance_min=2.0, late_tolerance_min=5.0)
+    deviated = {e.trip_no for e in events if e.status == "deviation"}
+    assert deviated == {"T2"}
+    for e in events:
+        if e.status == "deviation":
+            continue
+        assert e.earlier_trip not in deviated and e.later_trip not in deviated
+
+def test_recheck_follows_new_band():
+    base = datetime(2026, 1, 1, 8, 0)
+    arrivals = [
+        _planned("T1", base, base),
+        _planned("T2", base + timedelta(minutes=8), base + timedelta(minutes=18)),
+    ]
+    # 旧带（晚到 5 分钟）：T2 出带标偏离，不参与配对
+    old = detect_bunching(arrivals, 8.0, 3.0, 15.0, early_tolerance_min=2.0, late_tolerance_min=5.0)
+    assert [e.status for e in old] == ["deviation"]
+    # 改带宽（晚到 15 分钟）后再检必须跟新带：T2 回到带内正常配对
+    new = detect_bunching(arrivals, 8.0, 3.0, 15.0, early_tolerance_min=2.0, late_tolerance_min=15.0)
+    assert all(e.status != "deviation" for e in new)
+    assert len(new) == 1 and new[0].gap_min == 18.0
+    # 两带宽都改成 0：只比间隔，不整表打偏离
+    zeroed = detect_bunching(arrivals, 8.0, 3.0, 15.0, early_tolerance_min=0.0, late_tolerance_min=0.0)
+    assert all(e.status != "deviation" for e in zeroed)
+    assert len(zeroed) == 1 and zeroed[0].status == "large_gap"
