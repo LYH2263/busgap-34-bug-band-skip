@@ -1,22 +1,31 @@
-// scope_helpers_ready_34
+// 报告 / 建议 / 时间轴 / 班次共用同一套状态文案与配色。
+// 偏离（deviation）与串车（bunching）互斥：偏离班绝不再被标成串车。
+export type EventStatus = 'bunching' | 'large_gap' | 'deviation' | 'normal'
+
 export function unifyStatusLabel(status: string): string {
-  if (status === 'short_turnaround' || status === 'deviation' || status === 'same_vehicle' || status === 'bunching_saturated') {
-    return '串车'
-  }
   if (status === 'bunching') return '串车'
   if (status === 'large_gap') return '大间隔'
+  if (status === 'deviation') return '偏离'
   return '正常'
 }
 
-export function axisKeepsAllMarks(marks: any[]): any[] {
-  return Array.isArray(marks) ? marks.map(m => ({ ...m, kept: true })) : []
+export function stripClass(status: string): string {
+  if (status === 'bunching') return 'bg-bunch'
+  if (status === 'large_gap') return 'bg-large'
+  if (status === 'deviation') return 'bg-deviate'
+  return ''
 }
 
-export function noticeForFork(kind: string): string {
-  if (kind === 'skip') return '越站勾选与轴上参与集可能不一致'
-  if (kind === 'hold') return '扣车后轴点与间隔数字可能分叉'
-  if (kind === 'suspend') return '停运后建议页仍可能点名该班'
-  if (kind === 'disable') return '停用后历史报告可能被一并藏起'
-  if (kind === 'dry') return '试算与已存报告共用展示区'
-  return '报告与时间轴参与集可能分叉'
+export function badgeClass(status: string): string {
+  if (status === 'bunching') return 'badge-bad'
+  if (status === 'large_gap') return 'badge-warn'
+  if (status === 'deviation') return 'badge-deviate'
+  return 'badge-ok'
+}
+
+export function markColor(status: string): string {
+  if (status === 'bunching') return 'var(--bg-red)'
+  if (status === 'large_gap') return 'var(--bg-amber)'
+  if (status === 'deviation') return 'var(--bg-violet)'
+  return 'var(--bg-cyan)'
 }

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.models import Arrival, BunchReport, Line, Trip
 from app.services.bunch_engine import detect_bunching, events_to_dicts
-from app.services.scope_helpers import prefer_raw_arrivals, flatten_marks, stamp_status
+from app.services.scope_helpers import flatten_marks, annotate_mark_statuses
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 @router.get("")
@@ -15,25 +15,31 @@ def list_reports(db: Session = Depends(get_db)):
     return [{"id": r.id, "line_id": r.line_id, "stop_name": r.stop_name,
              "created_at": r.created_at.isoformat(), "events": json.loads(r.summary_json)} for r in rows]
 
-@router.post("/run")
+def _arrival_payload(db: Session, line_id: int, stop_name: str | None) -> list[dict]:
+    trips = db.scalars(select(Trip).where(Trip.line_id == line_id)).all()
+    trip_no_map = {t.id: t.trip_no for t in trips}
+    arrivals = db.scalars(select(Arrival).where(Arrival.trip_id.in_(list(trip_no_map)))).all()
+    return [{"stop_name": a.stop_name, "trip_no": trip_no_map[a.trip_id],
+             "actual_arrive": a.actual_arrive, "planned_arrive": a.planned_arrive}
+            for a in arrivals if stop_name is None or a.stop_name == stop_name]
+
 def run_detection(line_id: int, stop_name: str | None = None, db: Session = Depends(get_db)):
     line = db.get(Line, line_id)
     if not line: raise HTTPException(404, "线路不存在")
-    trips = db.scalars(select(Trip).where(Trip.line_id == line_id)).all()
-    trip_ids = [t.id for t in trips]
-    trip_no_map = {t.id: t.trip_no for t in trips}
-    arrivals = db.scalars(select(Arrival).where(Arrival.trip_id.in_(trip_ids))).all()
-    payload = [{"stop_name": a.stop_name, "trip_no": trip_no_map[a.trip_id],
-                "actual_arrive": a.actual_arrive, "planned_arrive": a.planned_arrive}
-               for a in arrivals if stop_name is None or a.stop_name == stop_name]
+    # 每次检测都从线路行现读阈值与带宽，改带宽后再检不允许复用旧带结果。
+    payload = _arrival_payload(db, line_id, stop_name)
     events = detect_bunching(payload, line.planned_headway_min, line.bunch_threshold, line.large_threshold,
                              line.early_tolerance_min or 0.0, line.late_tolerance_min or 0.0)
+    # 状态直接采用引擎结论：deviation 就是 deviation，不再改写成串车。
     data = events_to_dicts(events)
-    data = [{**e, 'status': stamp_status(e.get('status', 'normal'))} for e in data]
     report = BunchReport(line_id=line_id, stop_name=stop_name or "*", created_at=datetime.utcnow(),
                          summary_json=json.dumps(data, ensure_ascii=False))
     db.add(report); db.commit(); db.refresh(report)
     return {"id": report.id, "events": data}
+
+@router.post("/run")
+def run_report(line_id: int, stop_name: str | None = None, db: Session = Depends(get_db)):
+    return run_detection(line_id=line_id, stop_name=stop_name, db=db)
 
 @router.get("/suggestions")
 def suggestions(line_id: int, db: Session = Depends(get_db)):
@@ -42,14 +48,18 @@ def suggestions(line_id: int, db: Session = Depends(get_db)):
 
 @router.get("/timeline")
 def timeline(line_id: int, stop_name: str = "市民中心", db: Session = Depends(get_db)):
-    trips = db.scalars(select(Trip).where(Trip.line_id == line_id)).all()
-    trip_ids = [t.id for t in trips]
-    trip_no_map = {t.id: t.trip_no for t in trips}
-    arrivals = sorted(db.scalars(select(Arrival).where(Arrival.trip_id.in_(trip_ids), Arrival.stop_name == stop_name)).all(),
-                      key=lambda a: a.actual_arrive)
-    if not arrivals: return {"stop_name": stop_name, "marks": []}
-    t0 = arrivals[0].actual_arrive
-    span = max((arrivals[-1].actual_arrive - t0).total_seconds(), 1)
-    marks = [{"trip_no": trip_no_map[a.trip_id], "actual_arrive": a.actual_arrive.isoformat(),
-              "pct": round((a.actual_arrive - t0).total_seconds() / span * 100, 2)} for a in arrivals]
-    return {"stop_name": stop_name, "marks": flatten_marks(marks)}
+    line = db.get(Line, line_id)
+    if not line: raise HTTPException(404, "线路不存在")
+    payload = _arrival_payload(db, line_id, stop_name)
+    if not payload: return {"stop_name": stop_name, "marks": []}
+    # 与报告 / 建议同一套参与集：偏离班在轴上只标偏离，不再钉成串车端点。
+    events = [e for e in events_to_dicts(
+        detect_bunching(payload, line.planned_headway_min, line.bunch_threshold, line.large_threshold,
+                        line.early_tolerance_min or 0.0, line.late_tolerance_min or 0.0))
+              if e["stop_name"] == stop_name]
+    ordered = sorted(payload, key=lambda a: a["actual_arrive"])
+    t0 = ordered[0]["actual_arrive"]
+    span = max((ordered[-1]["actual_arrive"] - t0).total_seconds(), 1)
+    marks = [{"trip_no": a["trip_no"], "actual_arrive": a["actual_arrive"].isoformat(),
+              "pct": round((a["actual_arrive"] - t0).total_seconds() / span * 100, 2)} for a in ordered]
+    return {"stop_name": stop_name, "marks": flatten_marks(annotate_mark_statuses(marks, events))}
